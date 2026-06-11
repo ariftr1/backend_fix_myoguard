@@ -3,6 +3,7 @@ from google.auth.transport import requests as google_requests
 
 from flask import Flask, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import text
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
 
@@ -11,6 +12,8 @@ from datetime import datetime
 import joblib
 import numpy as np
 import pandas as pd
+
+from flask import jsonify
 
 app = Flask(__name__)
 CORS(app)
@@ -184,6 +187,51 @@ def evaluate_realtime():
         return jsonify({"status": "success", "hasil_keputusan": hasil_analisis}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+    
+# Tambahkan rute ini di bawah rute-rute yang sudah ada
+@app.route('/api/analitik/<int:user_id>', methods=['GET'])
+def get_analitik(user_id):
+    try:
+        # Kita gunakan db.session untuk query yang lebih clean
+        # Filter berdasarkan user_id yang didapat dari parameter URL
+        results = db.session.execute(
+            text("""
+                SELECT 
+                    DATE(waktu) as tanggal,
+                    AVG(jarak_cm) as rata_jarak,
+                    AVG(kedipan_per_menit) as rata_kedipan,
+                    COUNT(id) as frekuensi_sesi 
+                FROM riwayat_evaluasi
+                WHERE user_id = :uid 
+                AND waktu >= DATE(NOW()) - INTERVAL 7 DAY
+                GROUP BY DATE(waktu)
+                ORDER BY tanggal ASC
+            """), 
+            {"uid": user_id}
+        ).fetchall()
+
+        data_harian = []
+        for row in results:
+            # Memastikan kolom diakses dengan benar
+            data_harian.append({
+                "tanggal": str(row.tanggal),
+                "rata_jarak": round(float(row.rata_jarak or 0), 1),
+                "rata_kedipan": round(float(row.rata_kedipan or 0), 1),
+                "estimasi_jam_screen_time": round(float(row.frekuensi_sesi or 0) * 0.1, 1)
+            })
+
+        return jsonify({
+            "status": "success", 
+            "user_target": user_id, # Debugging: cek ID ini di Flutter
+            "data": data_harian
+        }), 200
+
+    except Exception as e:
+        print(f"Error Analitik: {e}") # Munculkan di terminal Flask
+        return jsonify({"status": "error", "pesan": str(e)}), 500
+    
+    
+    
 
 @app.route('/api/history/<int:user_id>', methods=['GET'])
 def get_history(user_id):
