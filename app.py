@@ -1,6 +1,7 @@
 import os
 import logging
 import random
+import requests
 from flask import Flask, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import text
@@ -14,7 +15,6 @@ import numpy as np
 import pandas as pd
 
 from flask_bcrypt import Bcrypt
-from flask_mail import Mail, Message
 
 app = Flask(__name__)
 CORS(app)
@@ -34,19 +34,15 @@ app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
 app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY')
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(days=1)
 
-# 🔥 KONFIGURASI EMAIL OTP (dari Environment Variable)
-app.config['MAIL_SERVER'] = 'smtp.gmail.com'
-app.config['MAIL_PORT'] = 587
-app.config['MAIL_USE_TLS'] = True
-app.config['MAIL_USERNAME'] = os.environ.get('MAIL_USERNAME')
-app.config['MAIL_PASSWORD'] = os.environ.get('MAIL_PASSWORD')
-app.config['MAIL_DEFAULT_SENDER'] = ('MyoGuard', os.environ.get('MAIL_USERNAME'))
+# 🔥 KONFIGURASI BREVO (pengganti Flask-Mail/SMTP, karena SMTP diblokir di Railway free plan)
+BREVO_API_KEY = os.environ.get('BREVO_API_KEY')
+BREVO_SENDER_EMAIL = os.environ.get('BREVO_SENDER_EMAIL')
+BREVO_SENDER_NAME = 'MyoGuard'
 
 OTP_EXPIRE_MINUTES = 5
 
 jwt = JWTManager(app)
 db = SQLAlchemy(app)
-mail = Mail(app)
 
 # --- MODEL DATABASE (Wajib Dideklarasikan Pertama) ---
 class User(db.Model):
@@ -101,18 +97,28 @@ def generate_and_send_otp(user):
     user.otp_expires_at = datetime.now() + timedelta(minutes=OTP_EXPIRE_MINUTES)
     db.session.commit()
 
-    msg = Message(
-        subject="Kode OTP MyoGuard",
-        recipients=[user.email],
-        body=(
-            f"Halo {user.nama},\n\n"
-            f"Kode OTP kamu adalah: {otp}\n"
-            f"Kode ini berlaku selama {OTP_EXPIRE_MINUTES} menit. "
-            f"Jangan bagikan kode ini ke siapa pun.\n\n"
-            f"- Tim MyoGuard"
+    url = "https://api.brevo.com/v3/smtp/email"
+    headers = {
+        "accept": "application/json",
+        "api-key": BREVO_API_KEY,
+        "content-type": "application/json"
+    }
+    payload = {
+        "sender": {"name": BREVO_SENDER_NAME, "email": BREVO_SENDER_EMAIL},
+        "to": [{"email": user.email, "name": user.nama}],
+        "subject": "Kode OTP MyoGuard",
+        "htmlContent": (
+            f"<p>Halo {user.nama},</p>"
+            f"<p>Kode OTP kamu adalah: <b>{otp}</b></p>"
+            f"<p>Kode ini berlaku selama {OTP_EXPIRE_MINUTES} menit. "
+            f"Jangan bagikan kode ini ke siapa pun.</p>"
+            f"<p>- Tim MyoGuard</p>"
         )
-    )
-    mail.send(msg)
+    }
+
+    response = requests.post(url, json=payload, headers=headers, timeout=15)
+    if response.status_code >= 300:
+        raise Exception(f"Brevo error {response.status_code}: {response.text}")
 
 
 # ==========================================
