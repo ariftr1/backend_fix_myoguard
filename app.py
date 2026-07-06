@@ -1,3 +1,4 @@
+import os
 import logging
 import random
 from flask import Flask, request, jsonify
@@ -23,23 +24,23 @@ bcrypt = Bcrypt(app)
 log = logging.getLogger('werkzeug')
 log.setLevel(logging.INFO)
 
-# 🔥 KONEKSI NEON POSTGRESQL ONLINE:
-app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://neondb_owner:npg_QKMRut9E6VwS@ep-wild-moon-aoac0f62-pooler.c-2.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require'
+# 🔥 KONEKSI NEON POSTGRESQL ONLINE (dari Environment Variable):
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
     'pool_pre_ping': True,
     'pool_recycle': 280
 }
-app.config['JWT_SECRET_KEY'] = 'nanda-myoguard-super-secret-key-2026'
+app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY')
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(days=1)
 
-# 🔥 KONFIGURASI EMAIL OTP (Flask-Mail)
+# 🔥 KONFIGURASI EMAIL OTP (dari Environment Variable)
 app.config['MAIL_SERVER'] = 'smtp.gmail.com'
 app.config['MAIL_PORT'] = 587
 app.config['MAIL_USE_TLS'] = True
-app.config['MAIL_USERNAME'] = 'ariftri1000@gmail.com'
-app.config['MAIL_PASSWORD'] = 'faza hvdp kmoi ykgx'
-app.config['MAIL_DEFAULT_SENDER'] = ('MyoGuard', 'ariftri1000@gmail.com')
+app.config['MAIL_USERNAME'] = os.environ.get('MAIL_USERNAME')
+app.config['MAIL_PASSWORD'] = os.environ.get('MAIL_PASSWORD')
+app.config['MAIL_DEFAULT_SENDER'] = ('MyoGuard', os.environ.get('MAIL_USERNAME'))
 
 OTP_EXPIRE_MINUTES = 5
 
@@ -500,4 +501,4 @@ def predict_risk():
 
 if __name__ == '__main__':
     print("Server MyoGuard berjalan di port 5000...")
-    app.run(host='0.0.0.0', port=5000, debug=True, use_reloader=False)
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=True, use_reloader=False)
