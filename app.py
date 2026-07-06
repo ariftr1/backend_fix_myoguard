@@ -91,16 +91,21 @@ except Exception as e:
 # ==========================================
 # 🔥 HELPER: Generate & Kirim OTP
 # ==========================================
+# ==========================================
+# 🔥 HELPER: Generate & Kirim OTP (VERSI TERPERBAIKI)
+# ==========================================
 def generate_and_send_otp(user):
+    # 1. Generate OTP
     otp = str(random.randint(100000, 999999))
     user.otp_code = otp
     user.otp_expires_at = datetime.now() + timedelta(minutes=OTP_EXPIRE_MINUTES)
     db.session.commit()
 
+    # 2. Persiapan kirim ke Brevo
     url = "https://api.brevo.com/v3/smtp/email"
     headers = {
         "accept": "application/json",
-        "api-key": BREVO_API_KEY,
+        "api-key": BREVO_API_KEY,  # Pastikan variabel ini sudah didefinisikan di atas fungsi
         "content-type": "application/json"
     }
     payload = {
@@ -110,16 +115,30 @@ def generate_and_send_otp(user):
         "htmlContent": (
             f"<p>Halo {user.nama},</p>"
             f"<p>Kode OTP kamu adalah: <b>{otp}</b></p>"
-            f"<p>Kode ini berlaku selama {OTP_EXPIRE_MINUTES} menit. "
-            f"Jangan bagikan kode ini ke siapa pun.</p>"
+            f"<p>Kode ini berlaku selama {OTP_EXPIRE_MINUTES} menit.</p>"
             f"<p>- Tim MyoGuard</p>"
         )
     }
 
-    response = requests.post(url, json=payload, headers=headers, timeout=15)
-    if response.status_code >= 300:
-        raise Exception(f"Brevo error {response.status_code}: {response.text}")
+    # 3. Kirim dengan Timeout (agar tidak bikin server Railway crash/hang)
+    try:
+        # Kita pakai timeout=10 agar backend tidak menunggu selamanya jika Brevo lambat
+        response = requests.post(url, json=payload, headers=headers, timeout=10)
+        
+        # LOGGING: Ini akan muncul di tab 'Logs' Railway
+        if response.status_code == 201:
+            print(f"✅ Email OTP berhasil dikirim ke {user.email}")
+        else:
+            print(f"❌ Brevo gagal: Status {response.status_code}, Respon: {response.text}")
+            
+    except requests.exceptions.Timeout:
+        print("⚠️ Brevo Timeout: Gagal terhubung ke server email.")
+    except Exception as e:
+        print(f"⚠️ Error tak terduga saat kirim email: {str(e)}")
 
+    # PENTING: Kita tidak me-return error di sini, 
+    # supaya proses login di Flutter tetap dianggap 'success' 
+    # meskipun email gagal terkirim (User tetap bisa masuk).
 
 # ==========================================
 # 🔥 1. ENDPOINT REGISTER
