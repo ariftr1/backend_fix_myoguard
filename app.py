@@ -1,7 +1,5 @@
-import os
 import logging
 import random
-import requests
 from flask import Flask, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import text
@@ -15,6 +13,7 @@ import numpy as np
 import pandas as pd
 
 from flask_bcrypt import Bcrypt
+from flask_mail import Mail, Message
 
 app = Flask(__name__)
 CORS(app)
@@ -24,25 +23,29 @@ bcrypt = Bcrypt(app)
 log = logging.getLogger('werkzeug')
 log.setLevel(logging.INFO)
 
-# 🔥 KONEKSI NEON POSTGRESQL ONLINE (dari Environment Variable):
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL')
+# 🔥 KONEKSI NEON POSTGRESQL ONLINE:
+app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://neondb_owner:npg_QKMRut9E6VwS@ep-wild-moon-aoac0f62-pooler.c-2.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
     'pool_pre_ping': True,
     'pool_recycle': 280
 }
-app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY')
+app.config['JWT_SECRET_KEY'] = 'nanda-myoguard-super-secret-key-2026'
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(days=1)
 
-# 🔥 KONFIGURASI BREVO (pengganti Flask-Mail/SMTP, karena SMTP diblokir di Railway free plan)
-BREVO_API_KEY = os.environ.get('BREVO_API_KEY')
-BREVO_SENDER_EMAIL = os.environ.get('BREVO_SENDER_EMAIL')
-BREVO_SENDER_NAME = 'MyoGuard'
+# 🔥 KONFIGURASI EMAIL OTP (Flask-Mail)
+app.config['MAIL_SERVER'] = 'smtp.gmail.com'
+app.config['MAIL_PORT'] = 587
+app.config['MAIL_USE_TLS'] = True
+app.config['MAIL_USERNAME'] = 'ariftri1000@gmail.com'
+app.config['MAIL_PASSWORD'] = 'hlapobrojczselmb' # <-- SPASI SUDAH DIHAPUS
+app.config['MAIL_DEFAULT_SENDER'] = ('MyoGuard', 'ariftri1000@gmail.com')
 
 OTP_EXPIRE_MINUTES = 5
 
 jwt = JWTManager(app)
 db = SQLAlchemy(app)
+mail = Mail(app)
 
 # --- MODEL DATABASE (Wajib Dideklarasikan Pertama) ---
 class User(db.Model):
@@ -91,54 +94,25 @@ except Exception as e:
 # ==========================================
 # 🔥 HELPER: Generate & Kirim OTP
 # ==========================================
-# ==========================================
-# 🔥 HELPER: Generate & Kirim OTP (VERSI TERPERBAIKI)
-# ==========================================
 def generate_and_send_otp(user):
-    # 1. Generate OTP
     otp = str(random.randint(100000, 999999))
     user.otp_code = otp
     user.otp_expires_at = datetime.now() + timedelta(minutes=OTP_EXPIRE_MINUTES)
     db.session.commit()
 
-    # 2. Persiapan kirim ke Brevo
-    url = "https://api.brevo.com/v3/smtp/email"
-    headers = {
-        "accept": "application/json",
-        "api-key": BREVO_API_KEY,  # Pastikan variabel ini sudah didefinisikan di atas fungsi
-        "content-type": "application/json"
-    }
-    payload = {
-        "sender": {"name": BREVO_SENDER_NAME, "email": BREVO_SENDER_EMAIL},
-        "to": [{"email": user.email, "name": user.nama}],
-        "subject": "Kode OTP MyoGuard",
-        "htmlContent": (
-            f"<p>Halo {user.nama},</p>"
-            f"<p>Kode OTP kamu adalah: <b>{otp}</b></p>"
-            f"<p>Kode ini berlaku selama {OTP_EXPIRE_MINUTES} menit.</p>"
-            f"<p>- Tim MyoGuard</p>"
+    msg = Message(
+        subject="Kode OTP MyoGuard",
+        recipients=[user.email],
+        body=(
+            f"Halo {user.nama},\n\n"
+            f"Kode OTP kamu adalah: {otp}\n"
+            f"Kode ini berlaku selama {OTP_EXPIRE_MINUTES} menit. "
+            f"Jangan bagikan kode ini ke siapa pun.\n\n"
+            f"- Tim MyoGuard"
         )
-    }
+    )
+    mail.send(msg)
 
-    # 3. Kirim dengan Timeout (agar tidak bikin server Railway crash/hang)
-    try:
-        # Kita pakai timeout=10 agar backend tidak menunggu selamanya jika Brevo lambat
-        response = requests.post(url, json=payload, headers=headers, timeout=10)
-        
-        # LOGGING: Ini akan muncul di tab 'Logs' Railway
-        if response.status_code == 201:
-            print(f"✅ Email OTP berhasil dikirim ke {user.email}")
-        else:
-            print(f"❌ Brevo gagal: Status {response.status_code}, Respon: {response.text}")
-            
-    except requests.exceptions.Timeout:
-        print("⚠️ Brevo Timeout: Gagal terhubung ke server email.")
-    except Exception as e:
-        print(f"⚠️ Error tak terduga saat kirim email: {str(e)}")
-
-    # PENTING: Kita tidak me-return error di sini, 
-    # supaya proses login di Flutter tetap dianggap 'success' 
-    # meskipun email gagal terkirim (User tetap bisa masuk).
 
 # ==========================================
 # 🔥 1. ENDPOINT REGISTER
@@ -526,4 +500,4 @@ def predict_risk():
 
 if __name__ == '__main__':
     print("Server MyoGuard berjalan di port 5000...")
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=True, use_reloader=False)
+    app.run(host='0.0.0.0', port=5000, debug=True, use_reloader=False)
