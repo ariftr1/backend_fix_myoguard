@@ -147,7 +147,7 @@ def register():
 # ==========================================
 # 2. Update Profil Dasar
 # ==========================================
-@app.route('/api/update-profil-dasar', methods=['PUT'])
+@app.route('/api/update-profil-dasar', methods=['POST', 'PUT'])
 @jwt_required()
 def update_profil_dasar():
     try:
@@ -281,12 +281,32 @@ def google_login():
         user = User.query.filter_by(email=email).first()
 
         if user:
-            generate_and_send_otp(user)
-            return jsonify({
-                "status": "otp_required",
-                "message": "Verifikasi Google berhasil. Kode OTP telah dikirim ke email kamu.",
-                "email": user.email
-            }), 200
+            # 🔥 CEK: Jika user sudah terverifikasi (pernah isi OTP), langsung masuk!
+            if user.is_verified:
+                access_token = create_access_token(identity=str(user.id))
+                return jsonify({
+                    "status": "success",
+                    "message": "Login Google berhasil",
+                    "user_id": user.id,
+                    "nama": user.nama,
+                    "email": user.email,
+                    "token": access_token,
+                    "tanggal_lahir": str(user.tanggal_lahir) if user.tanggal_lahir else "",
+                    "umur": user.umur if user.umur else 0,
+                    "pekerjaan": user.pekerjaan if user.pekerjaan else "",
+                    "status_kacamata": user.status_kacamata,
+                    "lama_berkacamata": user.lama_berkacamata if user.lama_berkacamata else "",
+                    "sph": user.sph if user.sph else 0.0,
+                    "cyl": user.cyl if user.cyl else 0.0,
+                }), 200
+            else:
+                # Jika belum pernah verifikasi, tetap minta OTP
+                generate_and_send_otp(user)
+                return jsonify({
+                    "status": "otp_required",
+                    "message": "Verifikasi Google berhasil. Kode OTP telah dikirim ke email kamu.",
+                    "email": user.email
+                }), 200
         else:
             return jsonify({
                 "status": "needs_password",
@@ -365,12 +385,17 @@ def resend_otp():
 def evaluate_realtime():
     data = request.json
     raw_user_id = data.get('user_id')
-    if not raw_user_id:
+
+    # ✅ FIX: Gunakan 'is None' bukan 'not raw_user_id'
+    # karena 'not 0' = True di Python, sehingga user_id=0 akan ditolak secara salah
+    if raw_user_id is None:
         return jsonify({"error": "user_id wajib dikirim!"}), 400
 
     user_id = int(raw_user_id)
     jarak = data.get('jarak_cm', 35)
     kedipan = data.get('kedipan_per_menit', 15)
+
+    print(f"📥 [EVALUATE] user_id={user_id}, jarak={jarak}, kedipan={kedipan}")
 
     hasil_analisis = evaluasi_kondisi_mata(jarak_cm=jarak, kedipan_per_menit=kedipan)
 
@@ -384,24 +409,30 @@ def evaluate_realtime():
         )
         db.session.add(catatan_baru)
         db.session.commit()
+        print(f"✅ [EVALUATE] Data berhasil disimpan ke Neon! user_id={user_id}")
         return jsonify({"status": "success", "hasil_keputusan": hasil_analisis}), 200
     except Exception as e:
         db.session.rollback()
+        print(f"🔴 [EVALUATE ERROR] Gagal simpan: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/analitik/<int:user_id>', methods=['GET'])
 def get_analitik(user_id):
     try:
+        # ✅ Mendukung parameter period: 'mingguan' (7 hari) atau 'bulanan' (30 hari)
+        period = request.args.get('period', 'mingguan')
+        interval_days = 30 if period == 'bulanan' else 7
+
         results = db.session.execute(
-            text("""
+            text(f"""
                 SELECT 
                     DATE(waktu) as tanggal,
                     AVG(jarak_cm) as rata_jarak,
                     AVG(kedipan_per_menit) as rata_kedipan,
-                    COUNT(id) as frekuensi_sesi 
+                    COUNT(id) as frekuensi_sesi
                 FROM riwayat_evaluasi
                 WHERE user_id = :uid 
-                AND waktu >= CURRENT_DATE - INTERVAL '7 days'
+                AND waktu >= CURRENT_DATE - INTERVAL '{interval_days} days'
                 GROUP BY DATE(waktu)
                 ORDER BY tanggal ASC
             """),
@@ -410,16 +441,31 @@ def get_analitik(user_id):
 
         data_harian = []
         for row in results:
+            # ✅ Setiap sesi dikirim tiap 1 menit, jadi frekuensi_sesi = total menit screen time
+            total_menit = int(row.frekuensi_sesi or 0)
+            jam = total_menit // 60
+            menit = total_menit % 60
+
+            rata_jarak = round(float(row.rata_jarak or 0), 1)
+            # ✅ Skor kepatuhan: jika jarak >= 30cm = 100%, lebih dekat = lebih rendah
+            skor_kepatuhan = min(100.0, round((rata_jarak / 30.0) * 100, 1)) if rata_jarak > 0 else 0.0
+
             data_harian.append({
                 "tanggal": str(row.tanggal),
-                "rata_jarak": round(float(row.rata_jarak or 0), 1),
+                "rata_jarak": rata_jarak,
                 "rata_kedipan": round(float(row.rata_kedipan or 0), 1),
-                "estimasi_jam_screen_time": round(float(row.frekuensi_sesi or 0) * 0.1, 1)
+                "total_menit_screen_time": total_menit,
+                "estimasi_jam_screen_time": round(total_menit / 60.0, 2),
+                "jam": jam,
+                "menit": menit,
+                "skor_kepatuhan": skor_kepatuhan,
             })
 
         return jsonify({
             "status": "success",
             "user_target": user_id,
+            "period": period,
+            "interval_hari": interval_days,
             "data": data_harian
         }), 200
 
