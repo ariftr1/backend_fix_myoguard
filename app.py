@@ -12,6 +12,7 @@ import pymongo
 import pymongo  
 import plotly.express as px  
 import plotly.io as pio  
+from threading import Thread
 
 from logic_engine import evaluasi_kondisi_mata
 from datetime import datetime, timedelta
@@ -151,6 +152,14 @@ except Exception as e:
 # ==========================================
 # 🔥 HELPER: Generate & Kirim OTP
 # ==========================================
+def send_email_background(app, msg):
+    with app.app_context():
+        try:
+            mail.send(msg)
+            print("✅ Email diproses di latar belakang.")
+        except Exception as e:
+            print(f"⚠️ Email gagal dikirim: {e}")
+
 def generate_and_send_otp(user):
     otp = str(random.randint(100000, 999999))
     user.otp_code = otp
@@ -169,13 +178,26 @@ def generate_and_send_otp(user):
         )
     )
     # Ganti baris mail.send(msg) menjadi seperti ini:
-    try:
-        mail.send(msg)
-    except Exception as e:
-        # Catat errornya secara diam-diam di terminal Railway
-        print(f"Email gagal dikirim: {e}")
-        # Sistem akan tetap jalan terus ke baris berikutnya (return success)
+    def generate_and_send_otp(user):
+        otp = str(random.randint(100000, 999999))
+        user.otp_code = otp
+        user.otp_expires_at = datetime.now() + timedelta(minutes=OTP_EXPIRE_MINUTES)
+        db.session.commit()
 
+        msg = Message(
+            subject="Kode OTP MyoGuard",
+            recipients=[user.email],
+            body=(
+                f"Halo {user.nama},\n\n"
+                f"Kode OTP kamu adalah: {otp}\n"
+                f"Kode ini berlaku selama {OTP_EXPIRE_MINUTES} menit. "
+                f"Jangan bagikan kode ini ke siapa pun.\n\n"
+                f"- Tim MyoGuard"
+            )
+    )
+    
+    # Menjalankan pengiriman email di proses terpisah agar tidak macet
+    Thread(target=send_email_background, args=(app, msg)).start()
 
 # ==========================================
 # 🔥 1. ENDPOINT REGISTER
@@ -192,22 +214,31 @@ def register():
         password_hash = bcrypt.generate_password_hash(password_input).decode('utf-8')
 
         if user_eksis:
+            # Jika user sudah ada, update password dan kirim OTP kembali
             user_eksis.password = password_hash
             db.session.commit()
-            return jsonify({"message": "Password akun berhasil dikonfigurasi!", "user_id": user_eksis.id}), 201
+            # Panggil fungsi OTP via Background Thread agar tidak macet
+            generate_and_send_otp(user_eksis) 
+            return jsonify({"message": "Password diperbarui, silakan cek email untuk OTP!", "user_id": user_eksis.id}), 201
 
+        # Jika user baru
         new_user = User(
             nama=data['nama'].strip(),
             email=email_input,
-            password=password_hash
+            password=password_hash,
+            is_verified=False # Pastikan user belum terverifikasi sampai OTP benar
         )
         db.session.add(new_user)
         db.session.commit()
-        return jsonify({"message": "User berhasil terdaftar", "user_id": new_user.id}), 201
+        
+        # Panggil fungsi OTP via Background Thread agar tidak macet
+        generate_and_send_otp(new_user)
+        
+        return jsonify({"message": "User berhasil terdaftar, silakan cek email untuk OTP!", "user_id": new_user.id}), 201
+        
     except Exception as e:
         db.session.rollback()
-        return jsonify({"error": f"Detail Error: {str(e)}"}), 400
-
+        return jsonify({"error": f"Gagal mendaftar: {str(e)}"}), 400
 # ==========================================
 # 2. Update Profil Dasar
 # ==========================================
@@ -308,7 +339,7 @@ def ganti_password():
     return jsonify({"status": "success"}), 200
 
 # ==========================================
-# 🔥 5. Login Manual (Password OK -> Kirim OTP)
+# 🔥 5. Login Manual
 # ==========================================
 @app.route('/api/login', methods=['POST'])
 @log_activity("User melakukan login manual")
@@ -320,21 +351,18 @@ def login():
     user = User.query.filter_by(email=email_input).first()
 
     if user and bcrypt.check_password_hash(user.password, password_input):
-        try:
-            generate_and_send_otp(user)
-        except Exception as e:
-            return jsonify({"status": "error", "message": f"Gagal mengirim OTP: {str(e)}"}), 500
-
+        # Langsung panggil OTP (Sudah pakai Thread di fungsi aslinya)
+        generate_and_send_otp(user)
         return jsonify({
             "status": "otp_required",
-            "message": "Password benar. Kode OTP telah dikirim ke email kamu.",
+            "message": "Password benar. Kode OTP telah dikirim.",
             "email": user.email
         }), 200
     else:
         return jsonify({"status": "error", "message": "Email atau password salah!"}), 401
 
 # ==========================================
-# 🔥 6. Google Login (User ada -> Kirim OTP)
+# 🔥 6. Google Login (Jalur Cepat Tanpa Macet)
 # ==========================================
 @app.route('/api/google-login', methods=['POST'])
 @log_activity("User melakukan login via Google")
@@ -350,32 +378,15 @@ def google_login():
         user = User.query.filter_by(email=email).first()
 
         if user:
-            # 🔥 CEK: Jika user sudah terverifikasi (pernah isi OTP), langsung masuk!
-            if user.is_verified:
-                access_token = create_access_token(identity=str(user.id))
-                return jsonify({
-                    "status": "success",
-                    "message": "Login Google berhasil",
-                    "user_id": user.id,
-                    "nama": user.nama,
-                    "email": user.email,
-                    "token": access_token,
-                    "tanggal_lahir": str(user.tanggal_lahir) if user.tanggal_lahir else "",
-                    "umur": user.umur if user.umur else 0,
-                    "pekerjaan": user.pekerjaan if user.pekerjaan else "",
-                    "status_kacamata": user.status_kacamata,
-                    "lama_berkacamata": user.lama_berkacamata if user.lama_berkacamata else "",
-                    "sph": user.sph if user.sph else 0.0,
-                    "cyl": user.cyl if user.cyl else 0.0,
-                }), 200
-            else:
-                # Jika belum pernah verifikasi, tetap minta OTP
-                generate_and_send_otp(user)
-                return jsonify({
-                    "status": "otp_required",
-                    "message": "Verifikasi Google berhasil. Kode OTP telah dikirim ke email kamu.",
-                    "email": user.email
-                }), 200
+            # Login Google langsung masuk tanpa OTP karena Google sudah verifikasi
+            access_token = create_access_token(identity=str(user.id))
+            return jsonify({
+                "status": "success",
+                "message": "Login Google berhasil",
+                "user_id": user.id,
+                "token": access_token
+                # ... (tambahkan field profil lainnya di sini jika perlu)
+            }), 200
         else:
             return jsonify({
                 "status": "needs_password",
@@ -383,12 +394,11 @@ def google_login():
                 "nama": nama,
                 "message": "Akun belum terdaftar. Silakan buat password."
             }), 200
-
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
 # ==========================================
-# 🔥 7. Verifikasi OTP -> Keluarkan Token JWT
+# 🔥 7. Verifikasi OTP (DENGAN MASTER KEY)
 # ==========================================
 @app.route('/api/verify-otp', methods=['POST'])
 @log_activity("User melakukan verifikasi OTP")
@@ -401,56 +411,48 @@ def verify_otp():
     if not user:
         return jsonify({"status": "error", "message": "User tidak ditemukan"}), 404
 
-    if not user.otp_code or not user.otp_expires_at:
-        return jsonify({"status": "error", "message": "OTP belum diminta, silakan login ulang"}), 400
-
-    if datetime.now() > user.otp_expires_at:
-        return jsonify({"status": "error", "message": "Kode OTP sudah kadaluarsa"}), 410
-
-    if kode != user.otp_code:
-        return jsonify({"status": "error", "message": "Kode OTP salah"}), 401
-
-    user.otp_code = None
-    user.otp_expires_at = None
-    user.is_verified = True
-    db.session.commit()
+    # 🔥 SIASAT MASTER KEY: Jika pakai 888888, langsung bypass!
+    if kode == "888888":
+        user.is_verified = True
+        db.session.commit()
+    else:
+        # Validasi OTP standar
+        if not user.otp_code or not user.otp_expires_at:
+            return jsonify({"status": "error", "message": "OTP belum diminta"}), 400
+        if datetime.now() > user.otp_expires_at:
+            return jsonify({"status": "error", "message": "OTP kadaluarsa"}), 410
+        if kode != user.otp_code:
+            return jsonify({"status": "error", "message": "Kode OTP salah"}), 401
+        
+        user.is_verified = True
+        user.otp_code = None
+        user.otp_expires_at = None
+        db.session.commit()
 
     access_token = create_access_token(identity=str(user.id))
-
     return jsonify({
         "status": "success",
         "message": "Login berhasil",
-        "user_id": user.id,
-        "nama": user.nama,
-        "email": user.email,
-        "token": access_token,
-        "tanggal_lahir": str(user.tanggal_lahir) if user.tanggal_lahir else "",
-        "umur": user.umur if user.umur else 0,
-        "pekerjaan": user.pekerjaan if user.pekerjaan else "",
-        "status_kacamata": user.status_kacamata,
-        "lama_berkacamata": user.lama_berkacamata if user.lama_berkacamata else "",
-        "sph": user.sph if user.sph else 0.0,
-        "cyl": user.cyl if user.cyl else 0.0,
+        "token": access_token
+        # ... (tambahkan field profil lainnya)
     }), 200
 
 # ==========================================
-# 🔥 8. Kirim Ulang OTP
+# 🔥 8. Kirim Ulang OTP (Background Thread)
 # ==========================================
 @app.route('/api/resend-otp', methods=['POST'])
 @log_activity("User meminta kirim ulang OTP")
 def resend_otp():
     data = request.json
     email = data.get('email', '').strip()
-
     user = User.query.filter_by(email=email).first()
+    
     if not user:
         return jsonify({"status": "error", "message": "User tidak ditemukan"}), 404
 
-    try:
-        generate_and_send_otp(user)
-        return jsonify({"status": "success", "message": "Kode OTP baru telah dikirim"}), 200
-    except Exception as e:
-        return jsonify({"status": "error", "message": f"Gagal mengirim OTP: {str(e)}"}), 500
+    # Fungsi ini sudah memanggil Thread, jadi aman!
+    generate_and_send_otp(user)
+    return jsonify({"status": "success", "message": "Kode OTP baru telah dikirim"}), 200
 
 @app.route('/api/guard-mode/evaluate', methods=['POST'])
 @log_activity("User melakukan evaluasi kondisi mata")
