@@ -1,0 +1,31 @@
+# Web Framework & Core
+Flask==3.1.3
+Werkzeug==3.1.8
+Jinja2==3.1.6
+MarkupSafe==3.0.3
+itsdangerous==2.2.0
+blinker==1.9.0
+click==8.4.2
+colorama==0.4.6
+
+# Database & ORM
+Flask-SQLAlchemy
+psycopg2-binary
+pymongo
+dnspython
+
+# Security, Auth, & Utils
+Flask-Bcrypt
+Flask-JWT-Extended
+Flask-Mail
+flask-cors
+
+# AI, Data Processing, & Visualization
+pandas
+numpy
+joblib
+scikit-learn
+plotly
+
+# Production Server (Untuk Railway)
+gunicorn

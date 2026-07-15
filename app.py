@@ -1,10 +1,17 @@
 import logging
+from flask import render_template
 import random
+from functools import wraps
 from flask import Flask, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import text
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
+from flask_mail import Mail, Message
+import pymongo
+import pymongo  
+import plotly.express as px  
+import plotly.io as pio  
 
 from logic_engine import evaluasi_kondisi_mata
 from datetime import datetime, timedelta
@@ -14,6 +21,43 @@ import pandas as pd
 
 from flask_bcrypt import Bcrypt
 from flask_mail import Mail, Message
+
+from functools import wraps
+
+def log_activity(activity_name):
+    def decorator(f):
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
+            try:
+                # 🔥 GUNAKAN verify_jwt_in_request(optional=True) 
+                # Ini tidak akan crash jika token tidak ada
+                from flask_jwt_extended import verify_jwt_in_request
+                
+                user_id = None
+                try:
+                    verify_jwt_in_request(optional=True)
+                    user_id = get_jwt_identity()
+                except:
+                    user_id = None
+                
+                # Jika tidak ada JWT, coba ambil email dari request body
+                if not user_id:
+                    data = request.get_json(silent=True)
+                    if data and 'email' in data:
+                        user = User.query.filter_by(email=data['email']).first()
+                        user_id = user.id if user else None
+                
+                if user_id:
+                    new_log = UserLog(user_id=int(user_id), aktivitas=activity_name)
+                    db.session.add(new_log)
+                    db.session.commit()
+                    print(f"✅ Log tercatat: {activity_name}")
+            except Exception as e:
+                # Kita tidak perlu rollback jika log gagal agar tidak mengganggu login user
+                print(f"⚠️ Gagal catat log (bukan masalah fatal): {e}")
+            return f(*args, **kwargs)
+        return decorated_function
+    return decorator
 
 app = Flask(__name__)
 CORS(app)
@@ -42,6 +86,12 @@ app.config['MAIL_PASSWORD'] = 'hlapobrojczselmb' # <-- SPASI SUDAH DIHAPUS
 app.config['MAIL_DEFAULT_SENDER'] = ('MyoGuard', 'ariftri1000@gmail.com')
 
 OTP_EXPIRE_MINUTES = 5
+
+# Ganti baris ini di app.py kamu:
+MONGO_URI = "mongodb+srv://siyanto:masyanto123@cluster0.vyjoror.mongodb.net/?appName=Cluster0"
+mongo_client = pymongo.MongoClient(MONGO_URI)
+mongo_db = mongo_client["db_myoguard_bigdata"]  # <-- Baris ini yang mendefinisikan 'mongo_db'
+print("🍃 [MONGO ATLAS] Terhubung untuk data eksternal!")
 
 jwt = JWTManager(app)
 db = SQLAlchemy(app)
@@ -75,6 +125,12 @@ class RiwayatEvaluasi(db.Model):
     kedipan_per_menit = db.Column(db.Integer, nullable=False)
     status_mata = db.Column(db.String(50), nullable=False)
     skor_bahaya = db.Column(db.Float, nullable=False)
+
+class UserLog(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    aktivitas = db.Column(db.String(255), nullable=False) 
+    waktu = db.Column(db.DateTime, default=datetime.now)
 
 # 🔥 PEMBUATAN TABEL OTOMATIS (Wajib ditaruh SETELAH model dideklarasikan)
 with app.app_context():
@@ -118,6 +174,7 @@ def generate_and_send_otp(user):
 # 🔥 1. ENDPOINT REGISTER
 # ==========================================
 @app.route('/api/register', methods=['POST'])
+@log_activity("User melakukan pendaftaran akun baru")
 def register():
     data = request.json
     email_input = data['email'].strip()
@@ -149,6 +206,7 @@ def register():
 # ==========================================
 @app.route('/api/update-profil-dasar', methods=['POST', 'PUT'])
 @jwt_required()
+@log_activity("User mengupdate profil dasar")
 def update_profil_dasar():
     try:
         user_id = int(get_jwt_identity())
@@ -190,6 +248,7 @@ def update_profil_dasar():
 # ==========================================
 @app.route('/api/update-riwayat-medis', methods=['PUT'])
 @jwt_required()
+@log_activity("User mengupdate data riwayat medis")
 def update_riwayat_medis():
     try:
         user_id = int(get_jwt_identity())
@@ -224,6 +283,7 @@ def update_riwayat_medis():
 # ==========================================
 @app.route('/api/ganti-password', methods=['PUT'])
 @jwt_required()
+@log_activity("User melakukan ganti password")
 def ganti_password():
     user = User.query.get(get_jwt_identity())
     if not user:
@@ -244,6 +304,7 @@ def ganti_password():
 # 🔥 5. Login Manual (Password OK -> Kirim OTP)
 # ==========================================
 @app.route('/api/login', methods=['POST'])
+@log_activity("User melakukan login manual")
 def login():
     data = request.json
     email_input = data.get('email', '').strip()
@@ -269,6 +330,7 @@ def login():
 # 🔥 6. Google Login (User ada -> Kirim OTP)
 # ==========================================
 @app.route('/api/google-login', methods=['POST'])
+@log_activity("User melakukan login via Google")
 def google_login():
     try:
         data = request.json
@@ -322,6 +384,7 @@ def google_login():
 # 🔥 7. Verifikasi OTP -> Keluarkan Token JWT
 # ==========================================
 @app.route('/api/verify-otp', methods=['POST'])
+@log_activity("User melakukan verifikasi OTP")
 def verify_otp():
     data = request.json
     email = data.get('email', '').strip()
@@ -367,6 +430,7 @@ def verify_otp():
 # 🔥 8. Kirim Ulang OTP
 # ==========================================
 @app.route('/api/resend-otp', methods=['POST'])
+@log_activity("User meminta kirim ulang OTP")
 def resend_otp():
     data = request.json
     email = data.get('email', '').strip()
@@ -382,41 +446,48 @@ def resend_otp():
         return jsonify({"status": "error", "message": f"Gagal mengirim OTP: {str(e)}"}), 500
 
 @app.route('/api/guard-mode/evaluate', methods=['POST'])
+@log_activity("User melakukan evaluasi kondisi mata")
 def evaluate_realtime():
-    data = request.json
-    raw_user_id = data.get('user_id')
-
-    # ✅ FIX: Gunakan 'is None' bukan 'not raw_user_id'
-    # karena 'not 0' = True di Python, sehingga user_id=0 akan ditolak secara salah
-    if raw_user_id is None:
-        return jsonify({"error": "user_id wajib dikirim!"}), 400
-
-    user_id = int(raw_user_id)
-    jarak = data.get('jarak_cm', 35)
-    kedipan = data.get('kedipan_per_menit', 15)
-
-    print(f"📥 [EVALUATE] user_id={user_id}, jarak={jarak}, kedipan={kedipan}")
-
-    hasil_analisis = evaluasi_kondisi_mata(jarak_cm=jarak, kedipan_per_menit=kedipan)
-
     try:
+        # 1. Gunakan silent=True agar tidak crash jika request dari Flutter bukan JSON murni
+        data = request.get_json(silent=True) or {}
+        raw_user_id = data.get('user_id')
+
+        if raw_user_id is None:
+            return jsonify({"error": "user_id wajib dikirim!"}), 400
+
+        # 2. Konversi tipe data sekarang dilindungi oleh try-except
+        user_id = int(raw_user_id) 
+        jarak = float(data.get('jarak_cm', 35))
+        kedipan = int(data.get('kedipan_per_menit', 15))
+
+        print(f"📥 [EVALUATE] user_id={user_id}, jarak={jarak}, kedipan={kedipan}")
+
+        # 3. Proses AI juga dilindungi. Jika logic_engine error, akan langsung ketahuan
+        hasil_analisis = evaluasi_kondisi_mata(jarak_cm=jarak, kedipan_per_menit=kedipan)
+
+        # 4. Proses Simpan Database
         catatan_baru = RiwayatEvaluasi(
             user_id=user_id,
-            jarak_cm=float(jarak),
-            kedipan_per_menit=int(kedipan),
+            jarak_cm=jarak,
+            kedipan_per_menit=kedipan,
             status_mata=hasil_analisis['status_mata'],
             skor_bahaya=float(hasil_analisis['skor_bahaya'])
         )
         db.session.add(catatan_baru)
         db.session.commit()
+        
         print(f"✅ [EVALUATE] Data berhasil disimpan ke Neon! user_id={user_id}")
         return jsonify({"status": "success", "hasil_keputusan": hasil_analisis}), 200
+        
     except Exception as e:
         db.session.rollback()
-        print(f"🔴 [EVALUATE ERROR] Gagal simpan: {e}")
+        # Sekarang semua jenis error (baik dari Flutter maupun database) akan tercatat di sini!
+        print(f"🔴 [EVALUATE ERROR] Gagal memproses atau menyimpan data: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/analitik/<int:user_id>', methods=['GET'])
+@log_activity("User mengakses dashboard analitik")
 def get_analitik(user_id):
     try:
         # ✅ Mendukung parameter period: 'mingguan' (7 hari) atau 'bulanan' (30 hari)
@@ -496,6 +567,7 @@ def get_history(user_id):
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/predict-risk', methods=['POST'])
+@log_activity("User melakukan prediksi risiko mata")
 def predict_risk():
     try:
         data = request.get_json(silent=True) or {}
@@ -543,7 +615,82 @@ def predict_risk():
     except Exception as e:
         print(f"Error Prediksi: {e}")
         return jsonify({"error": str(e)}), 500
+    
+    # ==========================================
+# 🔥 9. Tampilan Admin (Log Activity)
+# ==========================================
+# 🔥 9. Tampilan Admin (Log Activity)
+# ==========================================
+# 🔥 9. Tampilan Admin (Log Activity & Wawasan Eksternal)
+# ==========================================
+@app.route('/admin/logs')
+def admin_logs():
+    try:
+        # 1. Selalu ambil data log dari PostgreSQL (Neon DB) terlebih dahulu
+        logs = UserLog.query.order_by(UserLog.waktu.desc()).limit(100).all()
+        
+        # Inisialisasi string grafik kosong agar tidak error jika Mongo bermasalah
+        graph_pubmed_html = ""
+        graph_news_html = ""
+        
+        # 2. Ambil data dari MongoDB Atlas dengan proteksi try-except (Anti-Crash DNS)
+        try:
+            import plotly.express as px
+            import plotly.io as pio
+            
+            # Ambil data PubMed
+            col_pubmed = mongo_db["tren_pubmed_global"]
+            cursor_pubmed = col_pubmed.find({}, {"_id": 0}).sort("tahun", 1)
+            df_pubmed = pd.DataFrame(list(cursor_pubmed))
+            
+            if not df_pubmed.empty:
+                fig1 = px.area(df_pubmed, x="tahun", y="jumlah_publikasi_medis",
+                               title='Tren Publikasi Medis: Mata Minus vs Waktu Layar (Global)',
+                               labels={"tahun": "Tahun Publikasi", "jumlah_publikasi_medis": "Jumlah Kasus/Studi"},
+                               markers=True)
+                fig1.update_traces(line_color='#00ffff', fillcolor='rgba(0, 255, 255, 0.2)', 
+                                   marker=dict(size=10, color='#ff00ff', symbol='diamond'))
+                fig1.update_layout(template="plotly_dark", title_x=0.5, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+                graph_pubmed_html = pio.to_html(fig1, full_html=False, include_plotlyjs='cdn')
+
+            # Ambil data Google News
+            col_news = mongo_db["berita_mata_indo"]
+            cursor_news = col_news.find({}, {"_id": 0})
+            df_berita = pd.DataFrame(list(cursor_news))
+            
+            if not df_berita.empty:
+                df_top_media = df_berita['portal_media'].value_counts().reset_index()
+                df_top_media.columns = ['portal_media', 'jumlah_artikel']
+                df_top_media = df_top_media.head(10)
+                
+                fig2 = px.bar(df_top_media, x='jumlah_artikel', y='portal_media', orientation='h',
+                              title='Top 10 Portal Berita Indonesia Teraktif Membahas Kesehatan Mata',
+                              labels={'jumlah_artikel': 'Total Artikel', 'portal_media': 'Portal Media'},
+                              text='jumlah_artikel', color='jumlah_artikel', color_continuous_scale='Mint')
+                fig2.update_layout(template="plotly_dark", yaxis={'categoryorder':'total ascending'}, 
+                                   paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+                graph_news_html = pio.to_html(fig2, full_html=False, include_plotlyjs=False)
+                
+        except Exception as mongo_err:
+            print(f"⚠️ [MONGO WARNING] Gagal memuat diagram eksternal (Masalah DNS/Koneksi): {mongo_err}")
+
+        # Kirim data ke HTML template
+        return render_template('log_activity.html', 
+                               logs=logs, 
+                               graph_pubmed=graph_pubmed_html, 
+                               graph_news=graph_news_html)
+                               
+    except Exception as e:
+        return f"Terjadi kesalahan internal pada server: {str(e)}"
+
+# --- LETAKKAN DI SINI ---
+@app.route('/debug/cek-log-count')
+def cek_log():
+    jumlah = UserLog.query.count()
+    return jsonify({"total_log_di_database": jumlah})
+
 
 if __name__ == '__main__':
-    print("Server MyoGuard berjalan di port 5000...")
-    app.run(host='0.0.0.0', port=5000, debug=True, use_reloader=False)
+    print("Server MyoGuard berjalan...")
+    # Matikan debug dan reloader untuk versi Production (Railway)
+    app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)

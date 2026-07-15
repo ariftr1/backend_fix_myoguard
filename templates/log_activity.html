@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard Admin - MyoGuard</title>
+    <!-- Menggunakan Bootstrap untuk desain yang rapi dan responsif -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background-color: #121212; color: #ffffff; }
+        .card { border-radius: 15px; border: 1px solid #2d2d2d; }
+        .table th { background-color: #0d6efd; color: white; border-color: #373737; }
+        .table td { border-color: #373737; color: #e0e0e0; }
+        .table-hover tbody tr:hover { background-color: #1e1e1e; }
+        .text-primary-custom { color: #0d6efd; }
+    </style>
+</head>
+<body>
+
+<div class="container mt-5">
+    <div class="row justify-content-center">
+        <div class="col-md-11">
+            <h2 class="text-center mb-4 text-primary-custom fw-bold">⚙️ Dashboard Admin MyoGuard</h2>
+            
+            <!-- SECTION 1: TABEL INTERNAL LOG ACTIVITY -->
+            <div class="card bg-dark text-white shadow-lg mb-5">
+                <div class="card-header bg-dark border-secondary">
+                    <h5 class="mb-0 text-white">📜 Riwayat Aktivitas Pengguna (Log Internal)</h5>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-dark table-hover table-bordered text-center align-middle mb-0">
+                            <thead>
+                                <tr>
+                                    <th scope="col" style="width: 5%;">No</th>
+                                    <th scope="col" style="width: 20%;">Waktu (WIB)</th>
+                                    <th scope="col" style="width: 15%;">User ID</th>
+                                    <th scope="col" style="width: 60%;">Deskripsi Aktivitas</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <!-- Looping data dari Flask (Jinja2) -->
+                                {% for log in logs %}
+                                <tr>
+                                    <td>{{ loop.index }}</td>
+                                    <td>{{ log.waktu.strftime('%d %b %Y - %H:%M:%S') }}</td>
+                                    <td><span class="badge bg-primary">ID: {{ log.user_id }}</span></td>
+                                    <td class="text-start">{{ log.aktivitas }}</td>
+                                </tr>
+                                {% else %}
+                                <tr>
+                                    <td colspan="4" class="text-muted text-center py-4">Belum ada log aktivitas yang tercatat.</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <hr class="border-secondary my-5">
+
+            <!-- SECTION 2: DIAGRAM EKSTERNAL (BIG DATA WAWASAN) -->
+            <h3 class="mb-4 text-white fw-bold">🌐 Diagram Wawasan Eksternal (Big Data Myopia)</h3>
+            <div class="row">
+                <!-- Grafik 1: PubMed -->
+                <div class="col-md-12 mb-4">
+                    <div class="card bg-dark text-white p-3 shadow-lg">
+                        {% if graph_pubmed %}
+                            {{ graph_pubmed | safe }}
+                        {% else %}
+                            <div class="text-center text-muted py-5">
+                                <p class="mb-1">⚠️ Diagram PubMed gagal dimuat.</p>
+                                <small>Pastikan klaster MongoDB Atlas aktif atau periksa jaringan DNS laptop Anda.</small>
+                            </div>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <!-- Grafik 2: Google News -->
+                <div class="col-md-12 mb-5">
+                    <div class="card bg-dark text-white p-3 shadow-lg">
+                        {% if graph_news %}
+                            {{ graph_news | safe }}
+                        {% else %}
+                            <div class="text-center text-muted py-5">
+                                <p class="mb-1">⚠️ Diagram Google News gagal dimuat.</p>
+                                <small>Pastikan klaster MongoDB Atlas aktif atau periksa jaringan DNS laptop Anda.</small>
+                            </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
