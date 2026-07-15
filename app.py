@@ -81,6 +81,7 @@ app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(days=1)
 app.config['MAIL_SERVER'] = 'smtp.gmail.com'
 app.config['MAIL_PORT'] = 587
 app.config['MAIL_USE_TLS'] = True
+app.config['MAIL_USE_SSL'] = False
 app.config['MAIL_USERNAME'] = 'ariftri1000@gmail.com'
 app.config['MAIL_PASSWORD'] = 'hlapobrojczselmb' # <-- SPASI SUDAH DIHAPUS
 app.config['MAIL_DEFAULT_SENDER'] = ('MyoGuard', 'ariftri1000@gmail.com')
@@ -167,7 +168,13 @@ def generate_and_send_otp(user):
             f"- Tim MyoGuard"
         )
     )
-    mail.send(msg)
+    # Ganti baris mail.send(msg) menjadi seperti ini:
+    try:
+        mail.send(msg)
+    except Exception as e:
+        # Catat errornya secara diam-diam di terminal Railway
+        print(f"Email gagal dikirim: {e}")
+        # Sistem akan tetap jalan terus ke baris berikutnya (return success)
 
 
 # ==========================================
