@@ -341,6 +341,29 @@ def ganti_password():
 # ==========================================
 # 🔥 5. Login Manual
 # ==========================================
+@app.route('/api/login', methods=['POST'])
+@log_activity("User melakukan login manual")
+def login():
+    data = request.json
+    email_input = data.get('email', '').strip()
+    password_input = data.get('password', '').strip()
+
+    user = User.query.filter_by(email=email_input).first()
+
+    if user and bcrypt.check_password_hash(user.password, password_input):
+        # Langsung panggil OTP (Sudah pakai Thread di fungsi aslinya)
+        generate_and_send_otp(user)
+        return jsonify({
+            "status": "otp_required",
+            "message": "Password benar. Kode OTP telah dikirim.",
+            "email": user.email
+        }), 200
+    else:
+        return jsonify({"status": "error", "message": "Email atau password salah!"}), 401
+
+# ==========================================
+# 🔥 6. Google Login (Jalur Cepat Tanpa Macet)
+# ==========================================
 # ==========================================
 # 🔥 6. Google Login (Versi Datanya Lengkap)
 # ==========================================
@@ -374,41 +397,6 @@ def google_login():
                 "lama_berkacamata": user.lama_berkacamata if user.lama_berkacamata else "",
                 "sph": user.sph if user.sph is not None else 0.0,
                 "cyl": user.cyl if user.cyl is not None else 0.0,
-            }), 200
-        else:
-            return jsonify({
-                "status": "needs_password",
-                "email": email,
-                "nama": nama,
-                "message": "Akun belum terdaftar. Silakan buat password."
-            }), 200
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
-# ==========================================
-# 🔥 6. Google Login (Jalur Cepat Tanpa Macet)
-# ==========================================
-@app.route('/api/google-login', methods=['POST'])
-@log_activity("User melakukan login via Google")
-def google_login():
-    try:
-        data = request.json
-        email = data.get('email')
-        nama = data.get('nama')
-
-        if not email:
-            return jsonify({"status": "error", "message": "Data email tidak valid"}), 400
-
-        user = User.query.filter_by(email=email).first()
-
-        if user:
-            # Login Google langsung masuk tanpa OTP karena Google sudah verifikasi
-            access_token = create_access_token(identity=str(user.id))
-            return jsonify({
-                "status": "success",
-                "message": "Login Google berhasil",
-                "user_id": user.id,
-                "token": access_token
-                # ... (tambahkan field profil lainnya di sini jika perlu)
             }), 200
         else:
             return jsonify({
