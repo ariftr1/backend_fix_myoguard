@@ -341,26 +341,49 @@ def ganti_password():
 # ==========================================
 # 🔥 5. Login Manual
 # ==========================================
-@app.route('/api/login', methods=['POST'])
-@log_activity("User melakukan login manual")
-def login():
-    data = request.json
-    email_input = data.get('email', '').strip()
-    password_input = data.get('password', '').strip()
+# ==========================================
+# 🔥 6. Google Login (Versi Datanya Lengkap)
+# ==========================================
+@app.route('/api/google-login', methods=['POST'])
+@log_activity("User melakukan login via Google")
+def google_login():
+    try:
+        data = request.json
+        email = data.get('email')
+        nama = data.get('nama')
 
-    user = User.query.filter_by(email=email_input).first()
+        if not email:
+            return jsonify({"status": "error", "message": "Data email tidak valid"}), 400
 
-    if user and bcrypt.check_password_hash(user.password, password_input):
-        # Langsung panggil OTP (Sudah pakai Thread di fungsi aslinya)
-        generate_and_send_otp(user)
-        return jsonify({
-            "status": "otp_required",
-            "message": "Password benar. Kode OTP telah dikirim.",
-            "email": user.email
-        }), 200
-    else:
-        return jsonify({"status": "error", "message": "Email atau password salah!"}), 401
+        user = User.query.filter_by(email=email).first()
 
+        if user:
+            access_token = create_access_token(identity=str(user.id))
+            # ✅ KEMBALIKAN SEMUA DATA PROFIL DI SINI
+            return jsonify({
+                "status": "success",
+                "message": "Login Google berhasil",
+                "user_id": user.id,
+                "nama": user.nama,
+                "email": user.email,
+                "token": access_token,
+                "tanggal_lahir": str(user.tanggal_lahir) if user.tanggal_lahir else "",
+                "umur": user.umur if user.umur else 0,
+                "pekerjaan": user.pekerjaan if user.pekerjaan else "",
+                "status_kacamata": user.status_kacamata if user.status_kacamata else "",
+                "lama_berkacamata": user.lama_berkacamata if user.lama_berkacamata else "",
+                "sph": user.sph if user.sph is not None else 0.0,
+                "cyl": user.cyl if user.cyl is not None else 0.0,
+            }), 200
+        else:
+            return jsonify({
+                "status": "needs_password",
+                "email": email,
+                "nama": nama,
+                "message": "Akun belum terdaftar. Silakan buat password."
+            }), 200
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 # ==========================================
 # 🔥 6. Google Login (Jalur Cepat Tanpa Macet)
 # ==========================================
