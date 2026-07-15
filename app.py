@@ -9,7 +9,6 @@ from flask_cors import CORS
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
 from flask_mail import Mail, Message
 import pymongo
-import pymongo  
 import plotly.express as px  
 import plotly.io as pio  
 from threading import Thread
@@ -21,9 +20,6 @@ import numpy as np
 import pandas as pd
 
 from flask_bcrypt import Bcrypt
-from flask_mail import Mail, Message
-
-from functools import wraps
 
 def log_activity(activity_name):
     def decorator(f):
@@ -84,15 +80,15 @@ app.config['MAIL_PORT'] = 587
 app.config['MAIL_USE_TLS'] = True
 app.config['MAIL_USE_SSL'] = False
 app.config['MAIL_USERNAME'] = 'ariftri1000@gmail.com'
-app.config['MAIL_PASSWORD'] = 'hlapobrojczselmb' # <-- SPASI SUDAH DIHAPUS
+app.config['MAIL_PASSWORD'] = 'hlapobrojczselmb' 
 app.config['MAIL_DEFAULT_SENDER'] = ('MyoGuard', 'ariftri1000@gmail.com')
 
 OTP_EXPIRE_MINUTES = 5
 
-# Ganti baris ini di app.py kamu:
+# KONEKSI MONGODB
 MONGO_URI = "mongodb+srv://siyanto:masyanto123@cluster0.vyjoror.mongodb.net/?appName=Cluster0"
 mongo_client = pymongo.MongoClient(MONGO_URI)
-mongo_db = mongo_client["db_myoguard_bigdata"]  # <-- Baris ini yang mendefinisikan 'mongo_db'
+mongo_db = mongo_client["db_myoguard_bigdata"]  
 print("🍃 [MONGO ATLAS] Terhubung untuk data eksternal!")
 
 jwt = JWTManager(app)
@@ -134,7 +130,7 @@ class UserLog(db.Model):
     aktivitas = db.Column(db.String(255), nullable=False) 
     waktu = db.Column(db.DateTime, default=datetime.now)
 
-# 🔥 PEMBUATAN TABEL OTOMATIS (Wajib ditaruh SETELAH model dideklarasikan)
+# 🔥 PEMBUATAN TABEL OTOMATIS
 with app.app_context():
     db.create_all()
     print("🚀 [NEON CLOUD] Struktur Database MyoGuard Terbaru Siap & Digenerate Otomatis!")
@@ -177,27 +173,9 @@ def generate_and_send_otp(user):
             f"- Tim MyoGuard"
         )
     )
-    # Ganti baris mail.send(msg) menjadi seperti ini:
-    def generate_and_send_otp(user):
-        otp = str(random.randint(100000, 999999))
-        user.otp_code = otp
-        user.otp_expires_at = datetime.now() + timedelta(minutes=OTP_EXPIRE_MINUTES)
-        db.session.commit()
-
-        msg = Message(
-            subject="Kode OTP MyoGuard",
-            recipients=[user.email],
-            body=(
-                f"Halo {user.nama},\n\n"
-                f"Kode OTP kamu adalah: {otp}\n"
-                f"Kode ini berlaku selama {OTP_EXPIRE_MINUTES} menit. "
-                f"Jangan bagikan kode ini ke siapa pun.\n\n"
-                f"- Tim MyoGuard"
-            )
-    )
-    
     # Menjalankan pengiriman email di proses terpisah agar tidak macet
     Thread(target=send_email_background, args=(app, msg)).start()
+
 
 # ==========================================
 # 🔥 1. ENDPOINT REGISTER
@@ -214,31 +192,27 @@ def register():
         password_hash = bcrypt.generate_password_hash(password_input).decode('utf-8')
 
         if user_eksis:
-            # Jika user sudah ada, update password dan kirim OTP kembali
             user_eksis.password = password_hash
             db.session.commit()
-            # Panggil fungsi OTP via Background Thread agar tidak macet
             generate_and_send_otp(user_eksis) 
-            return jsonify({"message": "Password diperbarui, silakan cek email untuk OTP!", "user_id": user_eksis.id}), 201
+            return jsonify({"status": "otp_required", "message": "Password diperbarui, silakan cek email untuk OTP!", "user_id": user_eksis.id}), 201
 
-        # Jika user baru
         new_user = User(
             nama=data['nama'].strip(),
             email=email_input,
             password=password_hash,
-            is_verified=False # Pastikan user belum terverifikasi sampai OTP benar
+            is_verified=False 
         )
         db.session.add(new_user)
         db.session.commit()
         
-        # Panggil fungsi OTP via Background Thread agar tidak macet
         generate_and_send_otp(new_user)
-        
-        return jsonify({"message": "User berhasil terdaftar, silakan cek email untuk OTP!", "user_id": new_user.id}), 201
+        return jsonify({"status": "otp_required", "message": "Daftar berhasil, silakan cek OTP"}), 201
         
     except Exception as e:
         db.session.rollback()
         return jsonify({"error": f"Gagal mendaftar: {str(e)}"}), 400
+
 # ==========================================
 # 2. Update Profil Dasar
 # ==========================================
@@ -351,7 +325,6 @@ def login():
     user = User.query.filter_by(email=email_input).first()
 
     if user and bcrypt.check_password_hash(user.password, password_input):
-        # Langsung panggil OTP (Sudah pakai Thread di fungsi aslinya)
         generate_and_send_otp(user)
         return jsonify({
             "status": "otp_required",
@@ -361,11 +334,9 @@ def login():
     else:
         return jsonify({"status": "error", "message": "Email atau password salah!"}), 401
 
+
 # ==========================================
-# 🔥 6. Google Login (Jalur Cepat Tanpa Macet)
-# ==========================================
-# ==========================================
-# 🔥 6. Google Login (Versi Datanya Lengkap)
+# 🔥 6. Google Login (Versi Datanya Lengkap & Final)
 # ==========================================
 @app.route('/api/google-login', methods=['POST'])
 @log_activity("User melakukan login via Google")
@@ -382,7 +353,6 @@ def google_login():
 
         if user:
             access_token = create_access_token(identity=str(user.id))
-            # ✅ KEMBALIKAN SEMUA DATA PROFIL DI SINI
             return jsonify({
                 "status": "success",
                 "message": "Login Google berhasil",
@@ -393,7 +363,7 @@ def google_login():
                 "tanggal_lahir": str(user.tanggal_lahir) if user.tanggal_lahir else "",
                 "umur": user.umur if user.umur else 0,
                 "pekerjaan": user.pekerjaan if user.pekerjaan else "",
-                "status_kacamata": user.status_kacamata if user.status_kacamata else "",
+                "status_kacamata": user.status_kacamata if user.status_kacamata else False,
                 "lama_berkacamata": user.lama_berkacamata if user.lama_berkacamata else "",
                 "sph": user.sph if user.sph is not None else 0.0,
                 "cyl": user.cyl if user.cyl is not None else 0.0,
@@ -422,7 +392,7 @@ def verify_otp():
     if not user:
         return jsonify({"status": "error", "message": "User tidak ditemukan"}), 404
 
-    # 🔥 SIASAT MASTER KEY: Jika pakai 888888, langsung bypass!
+    # 🔥 SIASAT MASTER KEY
     if kode == "888888":
         user.is_verified = True
         db.session.commit()
@@ -441,11 +411,22 @@ def verify_otp():
         db.session.commit()
 
     access_token = create_access_token(identity=str(user.id))
+    
+    # ✅ Tambahkan Data Lengkap Disini!
     return jsonify({
         "status": "success",
         "message": "Login berhasil",
-        "token": access_token
-        # ... (tambahkan field profil lainnya)
+        "token": access_token,
+        "user_id": user.id,
+        "nama": user.nama,
+        "email": user.email,
+        "tanggal_lahir": str(user.tanggal_lahir) if user.tanggal_lahir else "",
+        "umur": user.umur if user.umur else 0,
+        "pekerjaan": user.pekerjaan if user.pekerjaan else "",
+        "status_kacamata": user.status_kacamata if user.status_kacamata else False,
+        "lama_berkacamata": user.lama_berkacamata if user.lama_berkacamata else "",
+        "sph": user.sph if user.sph is not None else 0.0,
+        "cyl": user.cyl if user.cyl is not None else 0.0,
     }), 200
 
 # ==========================================
@@ -461,32 +442,28 @@ def resend_otp():
     if not user:
         return jsonify({"status": "error", "message": "User tidak ditemukan"}), 404
 
-    # Fungsi ini sudah memanggil Thread, jadi aman!
     generate_and_send_otp(user)
     return jsonify({"status": "success", "message": "Kode OTP baru telah dikirim"}), 200
+
 
 @app.route('/api/guard-mode/evaluate', methods=['POST'])
 @log_activity("User melakukan evaluasi kondisi mata")
 def evaluate_realtime():
     try:
-        # 1. Gunakan silent=True agar tidak crash jika request dari Flutter bukan JSON murni
         data = request.get_json(silent=True) or {}
         raw_user_id = data.get('user_id')
 
         if raw_user_id is None:
             return jsonify({"error": "user_id wajib dikirim!"}), 400
 
-        # 2. Konversi tipe data sekarang dilindungi oleh try-except
         user_id = int(raw_user_id) 
         jarak = float(data.get('jarak_cm', 35))
         kedipan = int(data.get('kedipan_per_menit', 15))
 
         print(f"📥 [EVALUATE] user_id={user_id}, jarak={jarak}, kedipan={kedipan}")
 
-        # 3. Proses AI juga dilindungi. Jika logic_engine error, akan langsung ketahuan
         hasil_analisis = evaluasi_kondisi_mata(jarak_cm=jarak, kedipan_per_menit=kedipan)
 
-        # 4. Proses Simpan Database
         catatan_baru = RiwayatEvaluasi(
             user_id=user_id,
             jarak_cm=jarak,
@@ -502,7 +479,6 @@ def evaluate_realtime():
         
     except Exception as e:
         db.session.rollback()
-        # Sekarang semua jenis error (baik dari Flutter maupun database) akan tercatat di sini!
         print(f"🔴 [EVALUATE ERROR] Gagal memproses atau menyimpan data: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
@@ -510,7 +486,6 @@ def evaluate_realtime():
 @log_activity("User mengakses dashboard analitik")
 def get_analitik(user_id):
     try:
-        # ✅ Mendukung parameter period: 'mingguan' (7 hari) atau 'bulanan' (30 hari)
         period = request.args.get('period', 'mingguan')
         interval_days = 30 if period == 'bulanan' else 7
 
@@ -532,13 +507,11 @@ def get_analitik(user_id):
 
         data_harian = []
         for row in results:
-            # ✅ Setiap sesi dikirim tiap 1 menit, jadi frekuensi_sesi = total menit screen time
             total_menit = int(row.frekuensi_sesi or 0)
             jam = total_menit // 60
             menit = total_menit % 60
 
             rata_jarak = round(float(row.rata_jarak or 0), 1)
-            # ✅ Skor kepatuhan: jika jarak >= 30cm = 100%, lebih dekat = lebih rendah
             skor_kepatuhan = min(100.0, round((rata_jarak / 30.0) * 100, 1)) if rata_jarak > 0 else 0.0
 
             data_harian.append({
@@ -585,6 +558,7 @@ def get_history(user_id):
         return jsonify({"status": "success", "user_id": user_id, "total_data": len(data_format), "data": data_format}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
 
 @app.route('/api/predict-risk', methods=['POST'])
 @log_activity("User melakukan prediksi risiko mata")
@@ -636,29 +610,21 @@ def predict_risk():
         print(f"Error Prediksi: {e}")
         return jsonify({"error": str(e)}), 500
     
-    # ==========================================
-# 🔥 9. Tampilan Admin (Log Activity)
-# ==========================================
-# 🔥 9. Tampilan Admin (Log Activity)
 # ==========================================
 # 🔥 9. Tampilan Admin (Log Activity & Wawasan Eksternal)
 # ==========================================
 @app.route('/admin/logs')
 def admin_logs():
     try:
-        # 1. Selalu ambil data log dari PostgreSQL (Neon DB) terlebih dahulu
         logs = UserLog.query.order_by(UserLog.waktu.desc()).limit(100).all()
         
-        # Inisialisasi string grafik kosong agar tidak error jika Mongo bermasalah
         graph_pubmed_html = ""
         graph_news_html = ""
         
-        # 2. Ambil data dari MongoDB Atlas dengan proteksi try-except (Anti-Crash DNS)
         try:
             import plotly.express as px
             import plotly.io as pio
             
-            # Ambil data PubMed
             col_pubmed = mongo_db["tren_pubmed_global"]
             cursor_pubmed = col_pubmed.find({}, {"_id": 0}).sort("tahun", 1)
             df_pubmed = pd.DataFrame(list(cursor_pubmed))
@@ -673,7 +639,6 @@ def admin_logs():
                 fig1.update_layout(template="plotly_dark", title_x=0.5, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
                 graph_pubmed_html = pio.to_html(fig1, full_html=False, include_plotlyjs='cdn')
 
-            # Ambil data Google News
             col_news = mongo_db["berita_mata_indo"]
             cursor_news = col_news.find({}, {"_id": 0})
             df_berita = pd.DataFrame(list(cursor_news))
@@ -694,7 +659,6 @@ def admin_logs():
         except Exception as mongo_err:
             print(f"⚠️ [MONGO WARNING] Gagal memuat diagram eksternal (Masalah DNS/Koneksi): {mongo_err}")
 
-        # Kirim data ke HTML template
         return render_template('log_activity.html', 
                                logs=logs, 
                                graph_pubmed=graph_pubmed_html, 
@@ -703,7 +667,7 @@ def admin_logs():
     except Exception as e:
         return f"Terjadi kesalahan internal pada server: {str(e)}"
 
-# --- LETAKKAN DI SINI ---
+
 @app.route('/debug/cek-log-count')
 def cek_log():
     jumlah = UserLog.query.count()
@@ -712,5 +676,4 @@ def cek_log():
 
 if __name__ == '__main__':
     print("Server MyoGuard berjalan...")
-    # Matikan debug dan reloader untuk versi Production (Railway)
     app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)
